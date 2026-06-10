@@ -1,0 +1,129 @@
+#include <WiFi.h>
+#include <WebServer.h>
+#include <OneWire.h>
+#include <DallasTemperature.h>
+
+// WIFI
+const char* ssid = "SENSORES_WIFI";
+const char* password = "12345678";
+
+WebServer server(80);
+
+// PINES
+#define DS1 4
+#define DS2 16
+#define DS3 17
+
+#define TRIG 5
+#define ECHO 18
+
+// SENSORES
+OneWire oneWire1(DS1);
+OneWire oneWire2(DS2);
+OneWire oneWire3(DS3);
+
+DallasTemperature sensor1(&oneWire1);
+DallasTemperature sensor2(&oneWire2);
+DallasTemperature sensor3(&oneWire3);
+
+// VARIABLES
+float temp1 = 0;
+float temp2 = 0;
+float temp3 = 0;
+float distancia = 0;
+
+// ULTRASONICO
+float leerUltrasonico()
+{
+  digitalWrite(TRIG, LOW);
+  delayMicroseconds(2);
+
+  digitalWrite(TRIG, HIGH);
+  delayMicroseconds(10);
+
+  digitalWrite(TRIG, LOW);
+
+  long dur = pulseIn(ECHO, HIGH, 30000);
+
+  if (dur == 0)
+    return distancia;
+
+  return dur * 0.034 / 2;
+}
+
+// TEMPERATURAS
+void leerTemperaturas()
+{
+  sensor1.requestTemperatures();
+  sensor2.requestTemperatures();
+  sensor3.requestTemperatures();
+
+  delay(100);
+
+  float t1 = sensor1.getTempCByIndex(0);
+  float t2 = sensor2.getTempCByIndex(0);
+  float t3 = sensor3.getTempCByIndex(0);
+
+  if (t1 != -127.0) temp1 = t1;
+  if (t2 != -127.0) temp2 = t2;
+  if (t3 != -127.0) temp3 = t3;
+}
+
+// JSON
+void datosJSON()
+{
+  String json = "{";
+
+  json += "\"t1\":\"" + String(temp1, 1) + " °C\",";
+  json += "\"t2\":\"" + String(temp2, 1) + " °C\",";
+  json += "\"t3\":\"" + String(temp3, 1) + " °C\",";
+  json += "\"dist\":\"" + String(distancia, 1) + " cm\"";
+
+  json += "}";
+
+  server.send(200, "application/json", json);
+}
+
+void setup()
+{
+  Serial.begin(115200);
+
+  pinMode(TRIG, OUTPUT);
+  pinMode(ECHO, INPUT);
+
+  sensor1.begin();
+  sensor2.begin();
+  sensor3.begin();
+
+  WiFi.softAP(ssid, password);
+
+  Serial.println("Red SENSORES_WIFI creada");
+  Serial.print("IP: ");
+  Serial.println(WiFi.softAPIP());
+
+  server.on("/datos", datosJSON);
+
+  server.begin();
+}
+
+void loop()
+{
+  server.handleClient();
+
+  static unsigned long t = 0;
+
+  if (millis() - t >= 1000)
+  {
+    t = millis();
+
+    leerTemperaturas();
+    distancia = leerUltrasonico();
+
+    Serial.println("===== SENSORES =====");
+    Serial.print("T1: "); Serial.println(temp1);
+    Serial.print("T2: "); Serial.println(temp2);
+    Serial.print("T3: "); Serial.println(temp3);
+    Serial.print("Distancia: "); Serial.println(distancia);
+    Serial.println("====================");
+  }
+}
