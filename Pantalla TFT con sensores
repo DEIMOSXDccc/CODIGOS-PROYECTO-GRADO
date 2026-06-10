@@ -1,0 +1,314 @@
+#include <WiFi.h>
+#include <HTTPClient.h>
+
+#include <lvgl.h>
+#include <TFT_eSPI.h>
+#include <XPT2046_Touchscreen.h>
+
+//================ WIFI =================
+const char* ssid = "SENSORES_WIFI";
+const char* password = "12345678";
+
+String ipSensores = "http://192.168.4.1/datos";
+
+//================ TOUCH =================
+#define XPT2046_IRQ 36
+#define XPT2046_MOSI 32
+#define XPT2046_MISO 39
+#define XPT2046_CLK 25
+#define XPT2046_CS 33
+
+//================ PANTALLA =================
+#define SCREEN_WIDTH 320
+#define SCREEN_HEIGHT 240
+
+TFT_eSPI tft = TFT_eSPI();
+
+SPIClass touchscreenSPI = SPIClass(VSPI);
+XPT2046_Touchscreen touch(XPT2046_CS, XPT2046_IRQ);
+
+//================ LVGL =================
+static lv_disp_draw_buf_t draw_buf;
+static lv_color_t buf[SCREEN_WIDTH * 10];
+
+lv_obj_t * labelT1;
+lv_obj_t * labelT2;
+lv_obj_t * labelT3;
+lv_obj_t * labelDist;
+lv_obj_t * labelAlerta;
+
+String t1 = "--";
+String t2 = "--";
+String t3 = "--";
+String dist = "--";
+
+float limiteAlerta = 60.0;
+
+//================ DISPLAY =================
+void my_disp_flush(lv_disp_drv_t *disp, const lv_area_t *area, lv_color_t *color_p)
+{
+  uint32_t w = area->x2 - area->x1 + 1;
+  uint32_t h = area->y2 - area->y1 + 1;
+
+  tft.startWrite();
+  tft.setAddrWindow(area->x1, area->y1, w, h);
+  tft.pushColors((uint16_t *)&color_p->full, w * h, true);
+  tft.endWrite();
+
+  lv_disp_flush_ready(disp);
+}
+
+//================ TOUCH =================
+void my_touch_read(lv_indev_drv_t * indev_driver, lv_indev_data_t * data)
+{
+  if (touch.touched())
+  {
+    TS_Point p = touch.getPoint();
+
+    int x = map(p.y, 450, 3710, SCREEN_WIDTH, 0);
+    int y = map(p.x, 659, 3449, 0, SCREEN_HEIGHT);
+
+    x = constrain(x, 0, SCREEN_WIDTH - 1);
+    y = constrain(y, 0, SCREEN_HEIGHT - 1);
+
+    data->state = LV_INDEV_STATE_PR;
+    data->point.x = x;
+    data->point.y = y;
+  }
+  else
+  {
+    data->state = LV_INDEV_STATE_REL;
+  }
+}
+
+//================ JSON SIMPLE =================
+String extraerValor(String json, String clave)
+{
+  String buscar = "\"" + clave + "\":\"";
+  int inicio = json.indexOf(buscar);
+
+  if (inicio == -1) return "--";
+
+  inicio += buscar.length();
+
+  int fin = json.indexOf("\"", inicio);
+
+  if (fin == -1) return "--";
+
+  return json.substring(inicio, fin);
+}
+
+//================ DISTANCIA NUMERICA =================
+float obtenerDistanciaNumero()
+{
+  String soloNumero = dist;
+  soloNumero.replace(" cm", "");
+  soloNumero.replace("CM", "");
+  soloNumero.replace(" ", "");
+
+  return soloNumero.toFloat();
+}
+
+//================ ALERTA =================
+void actualizarAlerta()
+{
+  float distanciaNumero = obtenerDistanciaNumero();
+
+  if (distanciaNumero >= limiteAlerta)
+  {
+    lv_label_set_text(labelAlerta, "ALERTA: NIVEL BAJO");
+    lv_obj_set_style_text_color(labelAlerta, lv_color_hex(0xFF3333), 0);
+  }
+  else
+  {
+    lv_label_set_text(labelAlerta, "NIVEL NORMAL");
+    lv_obj_set_style_text_color(labelAlerta, lv_color_hex(0x00FF66), 0);
+  }
+}
+
+//================ ACTUALIZAR DATOS =================
+void actualizarDatos()
+{
+  if (WiFi.status() == WL_CONNECTED)
+  {
+    HTTPClient http;
+
+    http.begin(ipSensores);
+
+    int codigo = http.GET();
+
+    if (codigo > 0)
+    {
+      String json = http.getString();
+
+      Serial.println(json);
+
+      t1 = extraerValor(json, "t1");
+      t2 = extraerValor(json, "t2");
+      t3 = extraerValor(json, "t3");
+      dist = extraerValor(json, "dist");
+
+      lv_label_set_text(labelT1, ("T1: " + t1).c_str());
+      lv_label_set_text(labelT2, ("T2: " + t2).c_str());
+      lv_label_set_text(labelT3, ("T3: " + t3).c_str());
+      lv_label_set_text(labelDist, dist.c_str());
+
+      actualizarAlerta();
+    }
+
+    http.end();
+  }
+}
+
+//================ CREAR TARJETA =================
+lv_obj_t * crearTarjeta(lv_obj_t * padre, const char * texto, int y)
+{
+  lv_obj_t * card = lv_obj_create(padre);
+
+  lv_obj_set_size(card, 135, 38);
+  lv_obj_align(card, LV_ALIGN_TOP_MID, 0, y);
+
+  lv_obj_set_style_bg_color(card, lv_color_hex(0x004C6D), 0);
+  lv_obj_set_style_border_color(card, lv_color_hex(0x00E5FF), 0);
+  lv_obj_set_style_border_width(card, 2, 0);
+  lv_obj_set_style_radius(card, 10, 0);
+
+  lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+
+  lv_obj_t * label = lv_label_create(card);
+  lv_label_set_text(label, texto);
+  lv_obj_set_style_text_color(label, lv_color_hex(0xFFFFFF), 0);
+  lv_obj_center(label);
+
+  return label;
+}
+
+//================ INTERFAZ =================
+void crearInterfaz()
+{
+  lv_obj_t * screen = lv_scr_act();
+
+  lv_obj_set_style_bg_color(screen, lv_color_hex(0x001B2E), 0);
+
+  lv_obj_t * titulo = lv_label_create(screen);
+  lv_label_set_text(titulo, "HIDROPONIA");
+  lv_obj_set_style_text_color(titulo, lv_color_hex(0xFFFFFF), 0);
+  lv_obj_set_style_text_font(titulo, &lv_font_montserrat_24, 0);
+  lv_obj_align(titulo, LV_ALIGN_TOP_MID, 0, 6);
+
+  // PANEL TEMPERATURAS
+  lv_obj_t * panelTemp = lv_obj_create(screen);
+  lv_obj_set_size(panelTemp, 150, 175);
+  lv_obj_align(panelTemp, LV_ALIGN_BOTTOM_LEFT, 8, -8);
+  lv_obj_set_style_bg_color(panelTemp, lv_color_hex(0x003049), 0);
+  lv_obj_set_style_border_color(panelTemp, lv_color_hex(0x00E5FF), 0);
+  lv_obj_set_style_border_width(panelTemp, 2, 0);
+  lv_obj_set_style_radius(panelTemp, 12, 0);
+  lv_obj_clear_flag(panelTemp, LV_OBJ_FLAG_SCROLLABLE);
+
+  lv_obj_t * tituloTemp = lv_label_create(panelTemp);
+  lv_label_set_text(tituloTemp, "TEMP");
+  lv_obj_set_style_text_color(tituloTemp, lv_color_hex(0x00E5FF), 0);
+  lv_obj_align(tituloTemp, LV_ALIGN_TOP_MID, 0, 6);
+
+  labelT1 = crearTarjeta(panelTemp, "T1: --", 35);
+  labelT2 = crearTarjeta(panelTemp, "T2: --", 80);
+  labelT3 = crearTarjeta(panelTemp, "T3: --", 125);
+
+  // PANEL DISTANCIA
+  lv_obj_t * panelDist = lv_obj_create(screen);
+  lv_obj_set_size(panelDist, 150, 175);
+  lv_obj_align(panelDist, LV_ALIGN_BOTTOM_RIGHT, -8, -8);
+  lv_obj_set_style_bg_color(panelDist, lv_color_hex(0x003049), 0);
+  lv_obj_set_style_border_color(panelDist, lv_color_hex(0x00E5FF), 0);
+  lv_obj_set_style_border_width(panelDist, 2, 0);
+  lv_obj_set_style_radius(panelDist, 12, 0);
+  lv_obj_clear_flag(panelDist, LV_OBJ_FLAG_SCROLLABLE);
+
+  lv_obj_t * tituloDist = lv_label_create(panelDist);
+  lv_label_set_text(tituloDist, "DIST");
+  lv_obj_set_style_text_color(tituloDist, lv_color_hex(0x00E5FF), 0);
+  lv_obj_align(tituloDist, LV_ALIGN_TOP_MID, 0, 6);
+
+  labelDist = lv_label_create(panelDist);
+  lv_label_set_text(labelDist, "-- cm");
+  lv_obj_set_style_text_color(labelDist, lv_color_hex(0xFFFFFF), 0);
+  lv_obj_set_style_text_font(labelDist, &lv_font_montserrat_24, 0);
+  lv_obj_align(labelDist, LV_ALIGN_CENTER, 0, -25);
+
+  labelAlerta = lv_label_create(panelDist);
+  lv_label_set_text(labelAlerta, "NIVEL --");
+  lv_obj_set_style_text_color(labelAlerta, lv_color_hex(0xFFFF00), 0);
+  lv_obj_set_width(labelAlerta, 135);
+  lv_obj_set_style_text_align(labelAlerta, LV_TEXT_ALIGN_CENTER, 0);
+  lv_obj_align(labelAlerta, LV_ALIGN_CENTER, 0, 35);
+}
+
+//================ SETUP =================
+void setup()
+{
+  Serial.begin(115200);
+
+  WiFi.begin(ssid, password);
+
+  while (WiFi.status() != WL_CONNECTED)
+  {
+    delay(500);
+    Serial.println("Conectando a SENSORES_WIFI...");
+  }
+
+  Serial.println("WiFi conectado");
+
+  tft.init();
+  tft.setRotation(1);
+
+  touchscreenSPI.begin(
+    XPT2046_CLK,
+    XPT2046_MISO,
+    XPT2046_MOSI,
+    XPT2046_CS
+  );
+
+  touch.begin(touchscreenSPI);
+  touch.setRotation(2);
+
+  lv_init();
+
+  lv_disp_draw_buf_init(&draw_buf, buf, NULL, SCREEN_WIDTH * 10);
+
+  static lv_disp_drv_t disp_drv;
+  lv_disp_drv_init(&disp_drv);
+
+  disp_drv.hor_res = SCREEN_WIDTH;
+  disp_drv.ver_res = SCREEN_HEIGHT;
+  disp_drv.flush_cb = my_disp_flush;
+  disp_drv.draw_buf = &draw_buf;
+
+  lv_disp_drv_register(&disp_drv);
+
+  static lv_indev_drv_t indev_drv;
+  lv_indev_drv_init(&indev_drv);
+
+  indev_drv.type = LV_INDEV_TYPE_POINTER;
+  indev_drv.read_cb = my_touch_read;
+
+  lv_indev_drv_register(&indev_drv);
+
+  crearInterfaz();
+}
+
+//================ LOOP =================
+void loop()
+{
+  lv_timer_handler();
+
+  static unsigned long t = 0;
+
+  if (millis() - t >= 2000)
+  {
+    t = millis();
+    actualizarDatos();
+  }
+
+  delay(5);
+}
