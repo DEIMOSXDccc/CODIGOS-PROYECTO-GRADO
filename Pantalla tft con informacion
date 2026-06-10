@@ -1,0 +1,325 @@
+#include <lvgl.h>
+#include <TFT_eSPI.h>
+#include <XPT2046_Touchscreen.h>
+
+//================ TOUCH =================
+#define XPT2046_IRQ 36
+#define XPT2046_MOSI 32
+#define XPT2046_MISO 39
+#define XPT2046_CLK 25
+#define XPT2046_CS 33
+
+//================ PANTALLA =================
+#define SCREEN_WIDTH 320
+#define SCREEN_HEIGHT 240
+
+TFT_eSPI tft = TFT_eSPI();
+SPIClass touchscreenSPI = SPIClass(VSPI);
+XPT2046_Touchscreen touch(XPT2046_CS, XPT2046_IRQ);
+
+//================ LVGL =================
+static lv_disp_draw_buf_t draw_buf;
+static lv_color_t buf[SCREEN_WIDTH * 10];
+
+//================ COLORES =================
+#define COLOR_FONDO   0x061A10
+#define COLOR_PANEL   0x0B3D26
+#define COLOR_BOTON   0x00AA44
+#define COLOR_TITULO  0x00FF66
+#define COLOR_TEXTO   0xD8FFE4
+#define COLOR_ROJO    0xAA2222
+
+//================ DISPLAY =================
+void my_disp_flush(lv_disp_drv_t *disp, const lv_area_t *area, lv_color_t *color_p)
+{
+  uint32_t w = area->x2 - area->x1 + 1;
+  uint32_t h = area->y2 - area->y1 + 1;
+
+  tft.startWrite();
+  tft.setAddrWindow(area->x1, area->y1, w, h);
+  tft.pushColors((uint16_t *)&color_p->full, w * h, true);
+  tft.endWrite();
+
+  lv_disp_flush_ready(disp);
+}
+
+//================ TOUCH =================
+void my_touch_read(lv_indev_drv_t * indev_driver, lv_indev_data_t * data)
+{
+  if (touch.touched())
+  {
+    TS_Point p = touch.getPoint();
+
+    int x = map(p.y, 450, 3710, SCREEN_WIDTH, 0);
+    int y = map(p.x, 659, 3449, 0, SCREEN_HEIGHT);
+
+    x = constrain(x, 0, SCREEN_WIDTH - 1);
+    y = constrain(y, 0, SCREEN_HEIGHT - 1);
+
+    data->state = LV_INDEV_STATE_PR;
+    data->point.x = x;
+    data->point.y = y;
+  }
+  else
+  {
+    data->state = LV_INDEV_STATE_REL;
+  }
+}
+
+//================ LIMPIAR =================
+void limpiar()
+{
+  lv_obj_clean(lv_scr_act());
+  lv_obj_set_style_bg_color(lv_scr_act(), lv_color_hex(COLOR_FONDO), 0);
+}
+
+//================ TEXTO =================
+void crearTitulo(const char * texto)
+{
+  lv_obj_t * titulo = lv_label_create(lv_scr_act());
+  lv_label_set_text(titulo, texto);
+  lv_obj_set_style_text_color(titulo, lv_color_hex(COLOR_TITULO), 0);
+  lv_obj_set_style_text_font(titulo, &lv_font_montserrat_24, 0);
+  lv_obj_align(titulo, LV_ALIGN_TOP_MID, 0, 8);
+}
+
+void crearTexto(const char * texto)
+{
+  lv_obj_t * panel = lv_obj_create(lv_scr_act());
+  lv_obj_set_size(panel, 295, 145);
+  lv_obj_align(panel, LV_ALIGN_CENTER, 0, 12);
+  lv_obj_set_style_bg_color(panel, lv_color_hex(COLOR_PANEL), 0);
+  lv_obj_set_style_border_color(panel, lv_color_hex(COLOR_TITULO), 0);
+  lv_obj_set_style_border_width(panel, 2, 0);
+  lv_obj_set_style_radius(panel, 12, 0);
+  lv_obj_clear_flag(panel, LV_OBJ_FLAG_SCROLLABLE);
+
+  lv_obj_t * label = lv_label_create(panel);
+  lv_label_set_text(label, texto);
+  lv_obj_set_width(label, 270);
+  lv_obj_set_style_text_color(label, lv_color_hex(COLOR_TEXTO), 0);
+  lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
+  lv_obj_align(label, LV_ALIGN_CENTER, 0, 0);
+}
+
+//================ BOTONES =================
+lv_obj_t * crearBoton(const char * texto, int x, int y, lv_event_cb_t cb)
+{
+  lv_obj_t * btn = lv_btn_create(lv_scr_act());
+  lv_obj_set_size(btn, 135, 34);
+  lv_obj_align(btn, LV_ALIGN_TOP_LEFT, x, y);
+  lv_obj_set_style_bg_color(btn, lv_color_hex(COLOR_BOTON), 0);
+  lv_obj_set_style_radius(btn, 9, 0);
+  lv_obj_add_event_cb(btn, cb, LV_EVENT_CLICKED, NULL);
+
+  lv_obj_t * label = lv_label_create(btn);
+  lv_label_set_text(label, texto);
+  lv_obj_set_style_text_color(label, lv_color_hex(0xFFFFFF), 0);
+  lv_obj_center(label);
+
+  return btn;
+}
+
+void mostrarInicio();
+
+static void regresar_event(lv_event_t * e)
+{
+  mostrarInicio();
+}
+
+void crearRegresar()
+{
+  lv_obj_t * btn = lv_btn_create(lv_scr_act());
+  lv_obj_set_size(btn, 120, 34);
+  lv_obj_align(btn, LV_ALIGN_BOTTOM_MID, 0, -6);
+  lv_obj_set_style_bg_color(btn, lv_color_hex(COLOR_ROJO), 0);
+  lv_obj_set_style_radius(btn, 9, 0);
+  lv_obj_add_event_cb(btn, regresar_event, LV_EVENT_CLICKED, NULL);
+
+  lv_obj_t * label = lv_label_create(btn);
+  lv_label_set_text(label, "REGRESAR");
+  lv_obj_center(label);
+}
+
+//================ PAGINAS =================
+void mostrarObjetivo(lv_event_t * e)
+{
+  limpiar();
+  crearTitulo("OBJETIVO");
+  crearTexto(
+    "Disenar, construir e implementar un prototipo industrial de invernadero "
+    "hidroponico NFT controlado por ESP32 y pantallas TFT para optimizar "
+    "el cultivo de lechuga y fresa."
+  );
+  crearRegresar();
+}
+
+void mostrarComponentes(lv_event_t * e)
+{
+  limpiar();
+  crearTitulo("COMPONENTES");
+  crearTexto(
+    "Componentes electronicos:\n"
+    "- 3 pantallas TFT\n"
+    "- 2 ESP32\n"
+    "- 3 sensores DS18B20\n"
+    "- 1 rele\n"
+    "- 1 bomba 45W\n"
+    "- 1 sensor ultrasonico"
+  );
+  crearRegresar();
+}
+
+void mostrarNFT(lv_event_t * e)
+{
+  limpiar();
+  crearTitulo("SISTEMA NFT");
+  crearTexto(
+    "NFT significa Nutrient Film Technique.\n\n"
+    "Una pelicula delgada de solucion nutritiva circula por canales, "
+    "alimentando las raices con agua, oxigeno y nutrientes."
+  );
+  crearRegresar();
+}
+
+void mostrarIntegrantes(lv_event_t * e)
+{
+  limpiar();
+  crearTitulo("INTEGRANTES");
+  crearTexto(
+    "Daniel Quito\n"
+    "Marco Peralta\n"
+    "Isaac Quishpi\n"
+    "Kevin Sacancela"
+  );
+  crearRegresar();
+}
+
+void mostrarCurso(lv_event_t * e)
+{
+  limpiar();
+  crearTitulo("CURSO");
+  crearTexto(
+    "3ro MCT \"C\"\n\n"
+    "Proyecto:\n"
+    "Hidroponia Digital"
+  );
+  crearRegresar();
+}
+
+void mostrarFuncionamiento(lv_event_t * e)
+{
+  limpiar();
+  crearTitulo("FUNCIONAMIENTO");
+  crearTexto(
+    "El sistema usa dos ESP32.\n\n"
+    "Uno controla la bomba mediante rele y otro recopila datos de temperatura "
+    "y distancia. Las TFT muestran control, monitoreo e informacion."
+  );
+  crearRegresar();
+}
+
+void mostrarVentajas(lv_event_t * e)
+{
+  limpiar();
+  crearTitulo("VENTAJAS");
+  crearTexto(
+    "- Ahorro de agua\n"
+    "- Cultivo sin suelo\n"
+    "- Monitoreo en tiempo real\n"
+    "- Control automatizado\n"
+    "- Mejor uso de nutrientes"
+  );
+  crearRegresar();
+}
+
+void mostrarAplicaciones(lv_event_t * e)
+{
+  limpiar();
+  crearTitulo("APLICACIONES");
+  crearTexto(
+    "- Invernaderos\n"
+    "- Agricultura urbana\n"
+    "- Cultivo de lechuga y fresa\n"
+    "- Educacion tecnica\n"
+    "- Automatizacion agricola"
+  );
+  crearRegresar();
+}
+
+//================ INICIO =================
+void mostrarInicio()
+{
+  limpiar();
+
+  lv_obj_t * titulo = lv_label_create(lv_scr_act());
+  lv_label_set_text(titulo, "HIDROPONIA DIGITAL");
+  lv_obj_set_style_text_color(titulo, lv_color_hex(COLOR_TITULO), 0);
+  lv_obj_set_style_text_font(titulo, &lv_font_montserrat_22, 0);
+  lv_obj_align(titulo, LV_ALIGN_TOP_MID, 0, 6);
+
+  lv_obj_t * subtitulo = lv_label_create(lv_scr_act());
+  lv_label_set_text(subtitulo, "MENU PRINCIPAL");
+  lv_obj_set_style_text_color(subtitulo, lv_color_hex(COLOR_TEXTO), 0);
+  lv_obj_align(subtitulo, LV_ALIGN_TOP_MID, 0, 32);
+
+  crearBoton("OBJETIVO", 20, 58, mostrarObjetivo);
+  crearBoton("COMPONENTES", 165, 58, mostrarComponentes);
+
+  crearBoton("NFT", 20, 100, mostrarNFT);
+  crearBoton("FUNCIONA", 165, 100, mostrarFuncionamiento);
+
+  crearBoton("VENTAJAS", 20, 142, mostrarVentajas);
+  crearBoton("APLICA", 165, 142, mostrarAplicaciones);
+
+  crearBoton("INTEGRANTES", 20, 184, mostrarIntegrantes);
+  crearBoton("CURSO", 165, 184, mostrarCurso);
+}
+
+//================ SETUP =================
+void setup()
+{
+  Serial.begin(115200);
+
+  tft.init();
+  tft.setRotation(1);
+
+  touchscreenSPI.begin(
+    XPT2046_CLK,
+    XPT2046_MISO,
+    XPT2046_MOSI,
+    XPT2046_CS
+  );
+
+  touch.begin(touchscreenSPI);
+  touch.setRotation(2);
+
+  lv_init();
+
+  lv_disp_draw_buf_init(&draw_buf, buf, NULL, SCREEN_WIDTH * 10);
+
+  static lv_disp_drv_t disp_drv;
+  lv_disp_drv_init(&disp_drv);
+
+  disp_drv.hor_res = SCREEN_WIDTH;
+  disp_drv.ver_res = SCREEN_HEIGHT;
+  disp_drv.flush_cb = my_disp_flush;
+  disp_drv.draw_buf = &draw_buf;
+  lv_disp_drv_register(&disp_drv);
+
+  static lv_indev_drv_t indev_drv;
+  lv_indev_drv_init(&indev_drv);
+
+  indev_drv.type = LV_INDEV_TYPE_POINTER;
+  indev_drv.read_cb = my_touch_read;
+  lv_indev_drv_register(&indev_drv);
+
+  mostrarInicio();
+}
+
+//================ LOOP =================
+void loop()
+{
+  lv_timer_handler();
+  delay(5);
+}
